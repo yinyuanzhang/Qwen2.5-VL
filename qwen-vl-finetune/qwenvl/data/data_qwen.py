@@ -192,14 +192,24 @@ class LazySupervisedDataset(Dataset):
 
         random.shuffle(list_data_dict)  # Randomly shuffle the data for training
 
-        rank0_print("Formatting inputs...Skip in lazy mode")
-        self.tokenizer = tokenizer
-        self.list_data_dict = list_data_dict
-        self.data_args = data_args
-        self.data_args.image_processor.max_pixels = data_args.max_pixels
-        self.data_args.image_processor.min_pixels = data_args.min_pixels
-        self.data_args.image_processor.size["longest_edge"] = data_args.max_pixels
-        self.data_args.image_processor.image_processor.size["shortest_edge"] = data_args.min_pixels
+        if data_args.use_image_segmentation:
+            rank0_print("Formatting inputs...Skip in lazy mode")
+            self.tokenizer = tokenizer
+            self.list_data_dict = list_data_dict
+            self.data_args = data_args
+            self.data_args.image_processor.max_pixels = data_args.max_pixels
+            self.data_args.image_processor.min_pixels = data_args.min_pixels
+            self.data_args.image_processor.image_processor.size["longest_edge"] = data_args.max_pixels
+            self.data_args.image_processor.image_processor.size["shortest_edge"] = data_args.min_pixels
+        else:
+            rank0_print("Formatting inputs...Skip in lazy mode")
+            self.tokenizer = tokenizer
+            self.list_data_dict = list_data_dict
+            self.data_args = data_args
+            self.data_args.image_processor.max_pixels = data_args.max_pixels
+            self.data_args.image_processor.min_pixels = data_args.min_pixels
+            self.data_args.image_processor.size["longest_edge"] = data_args.max_pixels
+            self.data_args.image_processor.size["shortest_edge"] = data_args.min_pixels                
 
         # ====================================================================
         # 新增：初始化 ImageSegmentationHandler
@@ -255,7 +265,7 @@ class LazySupervisedDataset(Dataset):
             return np.array([1] * len(self.list_data_dict))
 
     def process_image_unified(self, image_file):
-        processor = copy.deepcopy(self.data_args.image_processor)
+        processor = copy.deepcopy(self.data_args.image_processor.image_processor)
         image = Image.open(image_file).convert("RGB")
 
         visual_processed = processor.preprocess(image, return_tensors="pt")
@@ -457,7 +467,7 @@ class LazySupervisedDataset(Dataset):
                 grid_thw_merged = [grid_thw_merged]
                 grid_thw = [grid_thw]
             grid_thw_merged = [
-                merged_thw.prod() // self.data_args.image_processor.merge_size**2
+                merged_thw.prod() // self.data_args.image_processor.image_processor.merge_size**2
                 for merged_thw in grid_thw_merged
             ]
 
@@ -545,7 +555,7 @@ class LazySupervisedDataset(Dataset):
                 video_grid_thw_merged = [video_grid_thw_merged]
                 video_grid_thw = [video_grid_thw]
             video_grid_thw_merged = [
-                merged_thw.prod() // self.data_args.image_processor.merge_size**2
+                merged_thw.prod() // self.data_args.image_processor.image_processor.merge_size**2
                 for merged_thw in video_grid_thw_merged
             ]
         chat_sources = copy.deepcopy([e["conversations"] for e in sources])
@@ -556,7 +566,7 @@ class LazySupervisedDataset(Dataset):
             grid_thw_video=video_grid_thw_merged if video_grid_thw_merged else None,
         )
         position_ids, _ = self.get_rope_index(
-            self.data_args.image_processor.merge_size,
+            self.data_args.image_processor.image_processor.merge_size,
             data_dict["input_ids"],
             image_grid_thw=torch.stack(grid_thw, dim=0) if grid_thw else None,
             video_grid_thw=(
