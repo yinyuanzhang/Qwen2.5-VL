@@ -1,0 +1,50 @@
+{
+    // 使用 IntelliSense 了解相关属性。
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Qwen2.5-VL POPE Inference",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/qwen25_vl_model_vqa_loader.py",
+            "cwd": "${workspaceFolder}", // 确保工作目录是项目根目录
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--model-path", "Qwen/Qwen2.5-VL-3B-Instruct", // 或者你的本地模型路径
+                "--image-folder", "${env:HOME}/autodl-tmp/playground/data/eval/pope/val2014",
+                "--question-file", "${env:HOME}/autodl-tmp/playground/data/eval/pope/llava_pope_test.jsonl",
+                "--answers-file", "${env:HOME}/autodl-tmp/playground/data/eval/pope/answers/qwen25-vl-3b-pope.jsonl",
+                "--temperature", "0",
+                "--num-beams", "1",
+                "--max-new-tokens", "128",
+                "--num-workers", "4",
+                "--use-image-segmentation", // 如果不需要分割，可以移除此行
+                "--yolo-model-path", "/data/zyy/LLaVA/checkpoints/yolov/yolov8l-seg.pt" // 确保路径正确
+            ],
+            "env": {
+                // 如果你的项目依赖特定的环境变量，可以在这里设置
+                // "LMUData": "${env:HOME}/autodl-tmp/playground/data/" // 示例，如果你的Python脚本需要此变量
+            }
+        },
+        {
+            "name": "Python: LLaVA POPE Evaluation",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/llava/eval/eval_pope.py", // 确保此路径正确指向你的 eval_pope.py
+            "cwd": "${workspaceFolder}", // 确保工作目录是项目根目录
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--annotation-dir", "${env:HOME}/autodl-tmp/playground/data/eval/pope/coco",
+                "--question-file", "${env:HOME}/autodl-tmp/playground/data/eval/pope/llava_pope_test.jsonl",
+                "--result-file", "${env:HOME}/autodl-tmp/playground/data/eval/pope/answers/qwen25-vl-3b-pope.jsonl"
+            ],
+            "env": {
+                // 如果你的项目依赖特定的环境变量，可以在这里设置
+            }
+        }
+    ]
+}

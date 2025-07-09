@@ -78,6 +78,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         system_prompt: str | None = None,
         post_process: bool = False,  # if True, will try to only extract stuff in the last \boxed{}.
         verbose: bool = False,
+        use_image_segmentation: bool = False, 
     ):
         super().__init__(use_custom_prompt=use_custom_prompt)
         self.min_pixels = min_pixels
@@ -98,38 +99,113 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         rank, world_size = get_rank_and_world_size()
         assert model_path is not None
         self.model_path = model_path
+        self.use_image_segmentation = use_image_segmentation
+
         MODEL_CLS = None
 
-        if listinstr(['2.5', '2_5', 'qwen25'], model_path.lower()):
-            from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-            MODEL_CLS = Qwen2_5_VLForConditionalGeneration
-            self.processor = AutoProcessor.from_pretrained(model_path)
-        else:
-            from transformers import Qwen2VLForConditionalGeneration, Qwen2VLProcessor
-            MODEL_CLS = Qwen2VLForConditionalGeneration
-            self.processor = Qwen2VLProcessor.from_pretrained(model_path)
+        if self.use_image_segmentation:
+            from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, AutoTokenizer, AutoConfig
+            from .custom_processor import CustomQwen2_5_VLProcessor # Make sure this imports your custom processor
+            from .custom_qwen_generation import CustomQwen2_5_VLForConditionalGeneration
+            
+            # Initialize custom processor
+            original_tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            original_processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+            qwen2VLImageProcessor = original_processor.image_processor
+            
+            self.processor = CustomQwen2_5_VLProcessor(
+                image_processor=qwen2VLImageProcessor,
+                tokenizer=original_tokenizer,
+                chat_template=original_tokenizer.chat_template,
+            )
+            print(f"Loaded CustomQwen2_5_VLProcessor for {model_path}")
 
-        gpu_mems = get_gpu_memory()
-        max_gpu_mem = max(gpu_mems) if gpu_mems != [] else -1
-        assert max_gpu_mem > 0
+            # Load CUSTOM model for segmentation
+            config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+            
+            base_model_for_weights = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_path,
+                device_map='auto',
+                torch_dtype='auto',
+                attn_implementation='flash_attention_2', # Assuming this is always desired
+                trust_remote_code=True
+            )
+            original_model_weights = base_model_for_weights.state_dict()
+            del base_model_for_weights # Free up the temporary model
+            torch.cuda.empty_cache() # Clear cache if any
 
-        # If only one process and GPU memory is less than 40GB
-        if '72b' in self.model_path.lower() or '32b' in self.model_path.lower():
-            self.model = MODEL_CLS.from_pretrained(
-                model_path, torch_dtype='auto', device_map=split_model(), attn_implementation='flash_attention_2'
-            )
-            self.model.eval()
-        elif auto_split_flag():
-            assert world_size == 1, 'Only support world_size == 1 when AUTO_SPLIT is set for non-72B Qwen2-VL'
-            # Will Use All GPUs to run one model
-            self.model = MODEL_CLS.from_pretrained(
-                model_path, torch_dtype='auto', device_map='auto', attn_implementation='flash_attention_2'
-            )
+            # Create an instance of your custom model
+            my_custom_model = CustomQwen2_5_VLForConditionalGeneration(config)
+            my_custom_model.load_state_dict(original_model_weights, strict=False)
+
+
+            gpu_mems = get_gpu_memory()
+            max_gpu_mem = max(gpu_mems) if gpu_mems else -1
+            assert max_gpu_mem > 0, "No GPU memory detected or maximum GPU memory is not positive."
+
+            if '72b' in self.model_path.lower() or '32b' in self.model_path.lower():
+                device_map_arg = split_model()
+            elif auto_split_flag():
+                assert world_size == 1, 'Only support world_size == 1 when AUTO_SPLIT is set for non-72B Qwen2-VL'
+                device_map_arg = 'auto'
+            else:
+                device_map_arg = 'cpu' # Fallback if no specific strategy
+
+            # Apply device map to the custom model
+            if device_map_arg == 'auto' and torch.cuda.is_available():
+                my_custom_model.to('cuda')
+                print(f"Custom model moved to default CUDA device for 'auto' strategy.")
+            elif isinstance(device_map_arg, str) and device_map_arg in ['cpu', 'cuda']:
+                my_custom_model.to(device_map_arg)
+                print(f"Custom model moved to {device_map_arg}.")
+            elif isinstance(device_map_arg, dict):
+                 from accelerate import dispatch_model
+                 my_custom_model = dispatch_model(my_custom_model, device_map=device_map_arg)
+                 print(f"Custom model dispatched across devices.")
+            else:
+                 print(f"Warning: Unexpected device_map_arg '{device_map_arg}'. Moving model to default CUDA device.")
+                 my_custom_model.to('cuda')
+
+            self.model = my_custom_model # Assign the custom model to self.model
+            self.model.eval() # Ensure custom model is in eval mode
+            print(f"Loaded CustomQwen2_5_VLForConditionalGeneration for {model_path}")
+
+            # Load YOLO model only in segmentation case
+            from ultralytics import YOLO
+            self.yolo_model_instance = YOLO('/data/zyy/LLaVA/checkpoints/yolov/yolov8l-seg.pt').eval()
+            print("YOLO model loaded for image segmentation.")
+
         else:
-            self.model = MODEL_CLS.from_pretrained(
-                model_path, torch_dtype='auto', device_map='cpu', attn_implementation='flash_attention_2'
-            )
-            self.model.cuda().eval()
+            if listinstr(['2.5', '2_5', 'qwen25'], model_path.lower()):
+                from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+                MODEL_CLS = Qwen2_5_VLForConditionalGeneration
+                self.processor = AutoProcessor.from_pretrained(model_path)
+            else:
+                from transformers import Qwen2VLForConditionalGeneration, Qwen2VLProcessor
+                MODEL_CLS = Qwen2VLForConditionalGeneration
+                self.processor = Qwen2VLProcessor.from_pretrained(model_path)
+
+            gpu_mems = get_gpu_memory()
+            max_gpu_mem = max(gpu_mems) if gpu_mems != [] else -1
+            assert max_gpu_mem > 0
+
+            # If only one process and GPU memory is less than 40GB
+            if '72b' in self.model_path.lower() or '32b' in self.model_path.lower():
+                self.model = MODEL_CLS.from_pretrained(
+                    model_path, torch_dtype='auto', device_map=split_model(), attn_implementation='flash_attention_2'
+                )
+                self.model.eval()
+            elif auto_split_flag():
+                assert world_size == 1, 'Only support world_size == 1 when AUTO_SPLIT is set for non-72B Qwen2-VL'
+                # Will Use All GPUs to run one model
+                self.model = MODEL_CLS.from_pretrained(
+                    model_path, torch_dtype='auto', device_map='auto', attn_implementation='flash_attention_2'
+                )
+            else:
+                self.model = MODEL_CLS.from_pretrained(
+                    model_path, torch_dtype='auto', device_map='cpu', attn_implementation='flash_attention_2'
+                )
+                self.model.cuda().eval()
 
         torch.cuda.empty_cache()
 
@@ -188,10 +264,130 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             print(f'\033[31m{messages}\033[0m')
 
         print(f"messages: {messages}")
-        text = self.processor.apply_chat_template([messages], tokenize=False, add_generation_prompt=True)
-        images, videos = process_vision_info([messages])
-        inputs = self.processor(text=text, images=images, videos=videos, padding=True, return_tensors='pt')
+
+        # src_image_path = os.path.join(os.environ['LMUData'], 'images', 'MMMU', '1.jpg')    
+        # result = self.yolo_model(src_image_path)
+
+
+        text = self.processor.apply_chat_template([messages], tokenize=False, add_generation_prompt=True)   # <|vision_start|><|image_pad|><|vision_end|> 视觉占位符
+        images, videos = process_vision_info([messages])  # resize(PIL.Image e.g., 2072,504)
+        
+        # 用 YOLOv8 生成原始掩码，并将其转换为 PIL.Image 
+        if self.use_image_segmentation:
+                import numpy as np
+                import cv2
+                import matplotlib.pyplot as plt
+                from PIL import Image
+                
+                if not images:
+                    print("No images provided for segmentation. Skipping segmentation.")
+                elif len(images) > 1:
+                    print("Currently, only single image input is supported for segmentation. Processing the first image.")
+                    pil_image = images[0]
+                else:
+                    pil_image = images[0]
+
+                if pil_image and self.yolo_model_instance: # Corrected to self.yolo_model_instance
+                    # Convert PIL Image to numpy array (RGB) for display and processing
+                    original_image_np = np.array(pil_image)
+                    original_height, original_width, _ = original_image_np.shape
+                    
+                    yolo_results = self.yolo_model_instance(pil_image, verbose=False) 
+
+                    combined_mask_np = np.zeros((original_height, original_width), dtype=np.uint8)
+
+                    if yolo_results and yolo_results[0].masks is not None and len(yolo_results[0].masks.data) > 0:
+                        masks_tensor = yolo_results[0].masks.data # Tensor of shape (num_objects, H_mask, W_mask)
+                        
+                        # --- Efficiency Improvement for Mask Combination ---
+                        masks_np_list = [m.cpu().numpy().astype(np.uint8) for m in masks_tensor]
+                        
+                        # Option 1: Loop and OR (generally robust)
+                        for mask_np in masks_np_list:
+                            resized_mask = cv2.resize(mask_np, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
+                            combined_mask_np = np.bitwise_or(combined_mask_np, resized_mask)
+                        
+                        print(f"Detected {len(masks_tensor)} foreground objects.")
+                    else:
+                        print("No foreground objects detected. Generating an all-background mask.")
+                    
+                    # 🚀 核心修改：将 combined_mask_np 转换为 PIL.Image.Image
+                    # 重要的是将 numpy 数组转换为 PIL Image 对象，并且指定模式
+                    # 对于单通道掩码，通常使用 'L' (灰度) 模式，或者转换为 'RGB' (如果 image_processor 要求)
+                    # 由于 image_processor 期望类似图片的输入，我们最好将其转换为 RGB 模式
+                    # 你可以将 combined_mask_np 堆叠成 3 个通道，然后转换为 PIL Image
+
+                    num_ones = np.sum(combined_mask_np == 1)
+                    num_zeros = np.sum(combined_mask_np == 0)
+                    total_elements = combined_mask_np.size
+                    proportion_ones = num_ones / total_elements
+                    print(f"Number of foreground: {num_ones}")
+                    print(f"Number of background: {num_ones}")
+                    print(f"Proportion of foreground: {proportion_ones:.4f}") 
+                    
+                    combined_mask_rgb_np = np.stack([combined_mask_np, combined_mask_np, combined_mask_np], axis=-1)
+                    combined_mask_pil = Image.fromarray(combined_mask_rgb_np, mode='RGB')
+                    
+                    masks = [combined_mask_pil] # 将 PIL Image 放入列表中
+                    print(f"Final combined foreground mask generated with shape: {combined_mask_np.shape}")
+
+                    if True or self.show_segment: 
+                        import matplotlib.pyplot as plt 
+                        
+                        plt.figure(figsize=(18, 6)) # Adjust figure size as needed
+
+                        # Subplot 1: Original Image
+                        plt.subplot(1, 3, 1)
+                        plt.imshow(pil_image)
+                        plt.title("Original Image")
+                        plt.axis('off')
+
+                        # Subplot 2: Foreground Mask
+                        plt.subplot(1, 3, 2)
+                        plt.imshow(combined_mask_np, cmap='gray') 
+                        plt.title("Generated Foreground Mask")
+                        plt.axis('off')
+
+                        # Subplot 3: Combined Image (Background original, Foreground blacked out)
+                        plt.subplot(1, 3, 3)
+                        blacked_out_image = original_image_np.copy()
+                        blacked_out_image[combined_mask_np == 1] = [0, 0, 0] 
+                        plt.imshow(blacked_out_image)
+                        plt.title("Foreground Blacked Out")
+                        plt.axis('off')
+                        
+                        plt.tight_layout()
+                        plt.savefig("segmentation_vis.png") # Changed filename to be more descriptive
+                        plt.close() # Close the figure to free up memory
+                        print("Segmentation visualization saved to segmentation_vis.png")
+
+                else: # This block handles cases where images is empty or YOLO model failed to load
+                    print("Image list is empty or YOLO model not loaded. Skipping segmentation.")
+                    masks = None # Explicitly set to None if no segmentation is performed
+
+
+        if self.use_image_segmentation:
+            inputs, mask_inputs = self.processor(text=text, images=images, videos=videos, masks = masks, padding=True, return_tensors='pt')
+            if mask_inputs and 'pixel_values' in mask_inputs:
+                processed_row_mask_to_pass = (mask_inputs.pixel_values.any(dim=1)).int()
+
+                num_ones = torch.sum(processed_row_mask_to_pass).item()
+                num_zeros = len(processed_row_mask_to_pass) - num_ones
+                total_elements = len(processed_row_mask_to_pass)
+                proportion_ones = num_ones / total_elements
+                print(f"Number of foreground in processed_row_mask: {num_ones}")
+                print(f"Number of background in processed_row_mask: {num_zeros}")
+                print(f"Proportion of foreground: {proportion_ones:.4f}")
+
+                is_foreground_mask = (mask_inputs.pixel_values == 1).any(dim=1) 
+                self.generate_kwargs['is_foreground_mask'] = is_foreground_mask
+
+        else:
+            inputs = self.processor(text=text, images=images, videos=videos, padding=True, return_tensors='pt')
+        
+
         inputs = inputs.to('cuda')
+        self.model.to('cuda')
 
         generated_ids = self.model.generate(
             **inputs,

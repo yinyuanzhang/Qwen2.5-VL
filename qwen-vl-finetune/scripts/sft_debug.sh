@@ -4,15 +4,8 @@
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 MASTER_PORT=${MASTER_PORT:-$(shuf -i 20001-29999 -n 1)}
 NNODES=${WORLD_SIZE:-1}
-# NPROC_PER_NODE=$(nvidia-smi --list-gpus | wc -l) # 自动检测可用的GPU数量
-NPROC_PER_NODE=4
-export CUDA_VISIBLE_DEVICES="4,5,6,7"
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export LD_LIBRARY_PATH=/data/zyy/cuda-11.8/libcurand/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}
-
-
-# locate libmpi_cxx
-
+NPROC_PER_NODE=1 # <--- 临时修改为1，用于单GPU调试
+export CUDA_VISIBLE_DEVICES="2" # <--- 临时指定一个GPU，例如GPU 2
 
 # DeepSpeed configuration
 deepspeed=./scripts/zero3.json
@@ -29,19 +22,17 @@ grad_accum_steps=4
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=llava
+datasets=llava%1
 
 # Output configuration
 run_name="qwen2vl-baseline"
 output_dir=./output
 
-# Image segmentation configuration (new parameters)
-USE_IMAGE_SEGMENTATION=True # Set to True to enable image segmentation
-YOLO_MODEL_PATH=/data/zyy/LLaVA/checkpoints/yolov/yolov8l-seg.pt # Path to your YOLOv8 segmentation model
-
 # Training arguments
+# 注意：这里需要移除 --deepspeed 参数，因为单进程调试时可能不方便处理 DeepSpeed
+# 如果你想在单进程下也使用 DeepSpeed 调试，需要确保 DeepSpeed 在单进程模式下也能初始化
+# 但对于 'unexpected keyword argument' 这种代码逻辑错误，可以先不带 DeepSpeed
 args="
-    --deepspeed ${deepspeed} \
     --model_name_or_path "${llm}" \
     --dataset_use ${datasets} \
     --data_flatten True \
@@ -70,14 +61,11 @@ args="
     --gradient_checkpointing True \
     --dataloader_num_workers 4 \
     --run_name ${run_name} \
-    --report_to wandb \
-    --use_image_segmentation ${USE_IMAGE_SEGMENTATION} \
-    --yolo_model_path "${YOLO_MODEL_PATH}"
-"
+    --report_to wandb"
 
-
-# Launch training
-torchrun --nproc_per_node=${NPROC_PER_NODE} \
-         --master_addr=${MASTER_ADDR} \
-         --master_port=${MASTER_PORT} \
-         ${entry_file} ${args}
+# Launch training (临时改为直接运行 python，以便调试)
+# torchrun --nproc_per_node=${NPROC_PER_NODE} \
+#          --master_addr=${MASTER_ADDR} \
+#          --master_port=${MASTER_PORT} \
+#          ${entry_file} ${args}
+python ${entry_file} ${args}

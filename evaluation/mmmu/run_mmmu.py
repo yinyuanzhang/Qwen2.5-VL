@@ -23,7 +23,7 @@ from qwen_vl_utils import process_vision_info
 def run_inference(args):
     """Run inference on the MMMU dataset."""
     # Load dataset
-    data = load_dataset(args.dataset)
+    data = load_dataset(args.dataset, local_file_path="/data/zyy/Qwen2.5-VL/MMMU_DEV_VAL.tsv")
     
     # Set up image root directory
     img_root = os.path.join(os.environ['LMUData'], 'images', 'MMMU')
@@ -51,7 +51,8 @@ def run_inference(args):
         top_k=1,
         use_custom_prompt=True,
         min_pixels=1280*28*28,
-        max_pixels=5120*28*28
+        max_pixels=5120*28*28,
+        use_image_segmentation = args.use_image_segmentation
     )
     model.set_dump_image(dump_image_func)
 
@@ -222,6 +223,9 @@ def main():
     infer_parser.add_argument("--output-file", type=str, required=True, help="Output file path")
     infer_parser.add_argument("--use-cot", action="store_true", help="Use Chain-of-Thought prompting")
     infer_parser.add_argument("--cot-prompt", type=str, default="", help="Custom Chain-of-Thought prompt")
+    # 添加 use_image_segmentation 参数
+    infer_parser.add_argument("--use-image-segmentation", action="store_true", default=False,
+                            help="Enable image segmentation for ViT processing. Requires YOLOv8.")
     
     # Evaluation parser
     eval_parser = subparsers.add_parser("eval", help="Run evaluation")

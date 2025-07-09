@@ -9,6 +9,10 @@ class ModelArguments:
     tune_mm_llm: bool = field(default=False)
     tune_mm_mlp: bool = field(default=False)
     tune_mm_vision: bool = field(default=False)
+    # Add this new argument
+    use_image_segmentation: bool = field(
+        default=False, metadata={"help": "Whether to use image segmentation during training."}
+    )
 
 @dataclass
 class DataArguments:
@@ -22,7 +26,11 @@ class DataArguments:
     min_pixels: int = field(default=28 * 28 * 16)
     video_max_frame_pixels: int = field(default=32 * 28 * 28)
     video_min_frame_pixels: int = field(default=4 * 28 * 28)
-
+    # Add this new argument
+    yolo_model_path: Optional[str] = field(
+        default='/data/zyy/LLaVA/checkpoints/yolov/yolov8l-seg.pt',
+        metadata={"help": "Path to the YOLOv8 segmentation model checkpoint."}
+    )
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):

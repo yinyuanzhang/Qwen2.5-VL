@@ -187,6 +187,8 @@ class LazySupervisedDataset(Dataset):
 
         rank0_print(f"Total training samples: {len(list_data_dict)}")
 
+        rank0_print(f"Total filtered samples with 'image' (or 'video' if included)")
+
         random.shuffle(list_data_dict)  # Randomly shuffle the data for training
 
         rank0_print("Formatting inputs...Skip in lazy mode")

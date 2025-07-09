@@ -7,18 +7,28 @@ from common_utils import download_file, md5, toliststr, decode_base64_to_image_f
 MMMU_DATASET_URL = 'https://opencompass.openxlab.space/utils/VLMEval/MMMU_DEV_VAL.tsv'
 MMMU_DATASET_MD5 = '521afc0f3bf341e6654327792781644d'
 
-def load_dataset(dataset_name='MMMU_DEV_VAL'):
-    """Load the MMMU dataset."""
-    data_root = os.path.join(os.environ['LMUData'])
-    os.makedirs(data_root, exist_ok=True)
+def load_dataset(dataset_name='MMMU_DEV_VAL', local_file_path=None):
+    if local_file_path:
+        # 如果提供了本地路径，则直接使用该路径
+        data_path = local_file_path
+        print(f"从本地路径加载数据集: {data_path}")
+    else:    
+        print("load")
+        """Load the MMMU dataset."""
+        data_root = os.path.join(os.environ['LMUData'])
+        os.makedirs(data_root, exist_ok=True)
+        
+        file_name = f"{dataset_name}.tsv"
+        data_path = os.path.join(data_root, file_name)
+        
+        # Download if not exists or MD5 doesn't match
+        if not os.path.exists(data_path) or md5(data_path) != MMMU_DATASET_MD5:
+            print(f"Downloading {dataset_name} dataset...")
+            download_file(MMMU_DATASET_URL, data_path)
     
-    file_name = f"{dataset_name}.tsv"
-    data_path = os.path.join(data_root, file_name)
-    
-    # Download if not exists or MD5 doesn't match
-    if not os.path.exists(data_path) or md5(data_path) != MMMU_DATASET_MD5:
-        print(f"Downloading {dataset_name} dataset...")
-        download_file(MMMU_DATASET_URL, data_path)
+    # 检查文件是否存在，如果不存在则抛出错误
+    if not os.path.exists(data_path):
+        raise FileNotFoundError(f"数据集文件未找到: {data_path}。请手动下载或检查路径。")
     
     # Load the dataset
     data = pd.read_csv(data_path, sep='\t').iloc[:8]

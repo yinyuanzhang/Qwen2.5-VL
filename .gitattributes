@@ -1,0 +1,2 @@
+MMMU_DEV_VAL.tsv filter=lfs diff=lfs merge=lfs -text
+qwen-vl-finetune/flash_attn-2.7.3+cu11torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl filter=lfs diff=lfs merge=lfs -text

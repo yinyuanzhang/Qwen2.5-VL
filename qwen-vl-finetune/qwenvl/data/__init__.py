@@ -26,12 +26,19 @@ VIDEOCHATGPT = {
     "data_path": "PATH_TO_VIDEOCHATGPT_DATA",
 }
 
+# 这是你的自定义数据集配置
+LLAVA_MIX665K_DATASET = {
+    "annotation_path": "/data/zyy/autodl-tmp/playground/data/llava_v1_5_mix665k.json",
+    "data_path": "/data/zyy/autodl-tmp/playground/data", # 确保这是图像文件的根目录
+}
+
 data_dict = {
     "cambrian_737k": CAMBRIAN_737K,
     "cambrian_737k_pack": CAMBRIAN_737K_PACK,
     "mp_doc": MP_DOC,
     "clevr_mc": CLEVR_MC,
     "videochatgpt": VIDEOCHATGPT,
+    "llava": LLAVA_MIX665K_DATASET
 }
 
 

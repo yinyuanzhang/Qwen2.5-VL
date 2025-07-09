@@ -1,18 +1,4 @@
-# Adopted from https://github.com/lm-sys/FastChat. Below is the original copyright:
-# Adopted from tatsu-lab@stanford_alpaca. Below is the original copyright:
-#    Copyright 2023 Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann Dubois, Xuechen Li
-#
-#    Licensed under the Apache License, Version 2.0 (the "License");
-#    you may not use this file except in compliance with the License.
-#    You may obtain a copy of the License at
-#
-#        http://www.apache.org/licenses/LICENSE-2.0
-#
-#    Unless required by applicable law or agreed to in writing, software
-#    distributed under the License is distributed on an "AS IS" BASIS,
-#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#    See the License for the specific language governing permissions and
-#    limitations under the License.
+# qwen-vl-finetune/train_qwen.py
 
 import os
 import logging
@@ -34,7 +20,13 @@ from trainer import replace_qwen2_vl_attention_class
 from transformers import (
     Qwen2VLForConditionalGeneration,
     Qwen2_5_VLForConditionalGeneration,
+    AutoTokenizer, AutoProcessor, Qwen2VLImageProcessor, Trainer, AutoConfig
 )
+
+# Import your custom processor and model
+from qwenvl.utils.custom_processor import CustomQwen2_5_VLProcessor 
+from qwenvl.utils.custom_qwen_generation import CustomQwen2_5_VLForConditionalGeneration
+
 from qwenvl.data.data_qwen import make_supervised_data_module
 from qwenvl.data.data_qwen_packed import make_supervised_data_module_packed
 from qwenvl.train.argument import (
@@ -42,19 +34,15 @@ from qwenvl.train.argument import (
     DataArguments,
     TrainingArguments,
 )
-from transformers import AutoTokenizer, AutoProcessor, Qwen2VLImageProcessor, Trainer
 
 local_rank = None
-
 
 def rank0_print(*args):
     if local_rank == 0:
         print(*args)
 
-
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
     """Collects the state dict and dump to disk."""
-
     if trainer.deepspeed:
         torch.cuda.synchronize()
         trainer.save_model(output_dir)
@@ -103,28 +91,86 @@ def train(attn_implementation="flash_attention_2"):
     local_rank = training_args.local_rank
     os.makedirs(training_args.output_dir, exist_ok=True)
 
-    if "qwen2.5" in model_args.model_name_or_path.lower():
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+    # Propagate use_image_segmentation from model_args to data_args
+    data_args.use_image_segmentation = model_args.use_image_segmentation
+    
+    # Initialize tokenizer first as it's needed for both model loading paths
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_args.model_name_or_path,
+        cache_dir=training_args.cache_dir,
+        model_max_length=training_args.model_max_length,
+        padding_side="right",
+        use_fast=False,
+    )
+
+    if model_args.use_image_segmentation:
+        rank0_print("Loading model and processor with image segmentation support...")
+        # Load original processor to get image_processor and chat_template
+        original_processor = AutoProcessor.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
+        qwen2VLImageProcessor = original_processor.image_processor
+
+        # Initialize custom processor
+        processor = CustomQwen2_5_VLProcessor(
+            image_processor=qwen2VLImageProcessor,
+            tokenizer=tokenizer,
+            chat_template=tokenizer.chat_template,
+            max_pixels=data_args.max_pixels, # 这应该从你的脚本中的 data_args 设置
+            min_pixels=data_args.min_pixels, # 这应该从你的脚本中的 data_args 设置
+        )
+        data_args.image_processor = processor # Assign the custom processor to data_args
+        data_args.model_type = "qwen2.5vl_segmentation" # Custom type for distinction
+
+        # Load original model weights into CustomQwen2_5_VLForConditionalGeneration
+        config = AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
+
+        if hasattr(config, 'vision_config') and hasattr(config.vision_config, 'patch_size'):
+            model_patch_size = config.vision_config.patch_size
+        elif hasattr(config, 'patch_size'): # Fallback for some models
+            model_patch_size = config.patch_size
+        else:
+            raise ValueError("Could not find patch_size in model config. Please check config.vision_config.patch_size or similar.")
+
+        data_args.merge_size = model_patch_size
+        rank0_print(f"当前 LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', '未设置')}")
+
+        # 直接从预训练模型加载 CustomQwen2_5_VLForConditionalGeneration
+        # 假设 CustomQwen2_5_VLForConditionalGeneration 继承自 Qwen2_5_VLForConditionalGeneration
+        # 并且其 __init__ 或 from_pretrained 方法能处理加载预训练权重
+        model = CustomQwen2_5_VLForConditionalGeneration.from_pretrained(
             model_args.model_name_or_path,
+            config=config, # 传递预加载的config可以避免重复加载
             cache_dir=training_args.cache_dir,
+            torch_dtype=(torch.bfloat16 if training_args.bf16 else torch.float),
             attn_implementation=attn_implementation,
-            torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+            trust_remote_code=True
         )
-        data_args.image_processor = AutoProcessor.from_pretrained(
-            model_args.model_name_or_path,
-        ).image_processor
-        data_args.model_type = "qwen2.5vl"
-    else:
-        model = Qwen2VLForConditionalGeneration.from_pretrained(
-            model_args.model_name_or_path,
-            cache_dir=training_args.cache_dir,
-            attn_implementation=attn_implementation,
-            torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
-        )
-        data_args.image_processor = Qwen2VLImageProcessor.from_pretrained(
-            model_args.model_name_or_path,
-        )
-        data_args.model_type = "qwen2vl"
+
+        rank0_print(f"Loaded CustomQwen2_5_VLForConditionalGeneration for {model_args.model_name_or_path}")
+
+    else: # Original logic for non-segmentation training
+        rank0_print("Loading model and processor without image segmentation...")
+        if "qwen2.5" in model_args.model_name_or_path.lower():
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_args.model_name_or_path,
+                cache_dir=training_args.cache_dir,
+                attn_implementation=attn_implementation,
+                torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+            )
+            data_args.image_processor = AutoProcessor.from_pretrained(
+                model_args.model_name_or_path,
+            ).image_processor
+            data_args.model_type = "qwen2.5vl"
+        else:
+            model = Qwen2VLForConditionalGeneration.from_pretrained(
+                model_args.model_name_or_path,
+                cache_dir=training_args.cache_dir,
+                attn_implementation=attn_implementation,
+                torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
+            )
+            data_args.image_processor = Qwen2VLImageProcessor.from_pretrained(
+                model_args.model_name_or_path,
+            )
+            data_args.model_type = "qwen2vl"
 
     if data_args.data_flatten:
         replace_qwen2_vl_attention_class()
