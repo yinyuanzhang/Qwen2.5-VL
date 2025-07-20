@@ -35,6 +35,28 @@ from qwenvl.train.argument import (
     TrainingArguments,
 )
 
+# =========================================================================
+
+import torch.multiprocessing as mp # 导入 multiprocessing 模块
+
+# try:
+#     # 显式设置 expandable_segments 为 False
+#     torch.cuda.memory._set_allocator_settings('expandable_segments:False')
+#     print("PyTorch CUDA 分配器设置：expandable_segments 已设置为 False。")
+# except Exception as e:
+#     print(f"警告：无法设置 CUDA 分配器选项：{e}")
+
+# 关键步骤：在任何 PyTorch 或 multiprocessing 相关代码之前设置启动方法
+# 这必须在 DataLoader 或任何 CUDA 操作之前完成。
+try:
+    mp.set_start_method('spawn', force=True)
+    print("多进程启动方法已设置为 'spawn'。")
+except RuntimeError:
+    # 如果已经设置过（例如被某个库设置），这里会捕获错误，可以忽略
+    print("多进程启动方法已设置。")
+# =========================================================================
+
+
 local_rank = None
 
 def rank0_print(*args):
@@ -105,33 +127,9 @@ def train(attn_implementation="flash_attention_2"):
 
     if model_args.use_image_segmentation:
         rank0_print("Loading model and processor with image segmentation support...")
-        # Load original processor to get image_processor and chat_template
-        original_processor = AutoProcessor.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
-        qwen2VLImageProcessor = original_processor.image_processor
-
-        # Initialize custom processor
-        processor = CustomQwen2_5_VLProcessor(
-            image_processor=qwen2VLImageProcessor,
-            tokenizer=tokenizer,
-            chat_template=tokenizer.chat_template,
-            max_pixels=data_args.max_pixels, # 这应该从你的脚本中的 data_args 设置
-            min_pixels=data_args.min_pixels, # 这应该从你的脚本中的 data_args 设置
-        )
-        data_args.image_processor = processor # Assign the custom processor to data_args
-        data_args.model_type = "qwen2.5vl_segmentation" # Custom type for distinction
 
         # Load original model weights into CustomQwen2_5_VLForConditionalGeneration
         config = AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
-
-        if hasattr(config, 'vision_config') and hasattr(config.vision_config, 'patch_size'):
-            model_patch_size = config.vision_config.patch_size
-        elif hasattr(config, 'patch_size'): # Fallback for some models
-            model_patch_size = config.patch_size
-        else:
-            raise ValueError("Could not find patch_size in model config. Please check config.vision_config.patch_size or similar.")
-
-        data_args.merge_size = model_patch_size
-        rank0_print(f"当前 LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', '未设置')}")
 
         # 直接从预训练模型加载 CustomQwen2_5_VLForConditionalGeneration
         # 假设 CustomQwen2_5_VLForConditionalGeneration 继承自 Qwen2_5_VLForConditionalGeneration
@@ -144,8 +142,10 @@ def train(attn_implementation="flash_attention_2"):
             attn_implementation=attn_implementation,
             trust_remote_code=True
         )
-
-        rank0_print(f"Loaded CustomQwen2_5_VLForConditionalGeneration for {model_args.model_name_or_path}")
+        data_args.image_processor = AutoProcessor.from_pretrained(
+            model_args.model_name_or_path,
+        ).image_processor
+        data_args.model_type = "qwen2.5vl"   
 
     else: # Original logic for non-segmentation training
         rank0_print("Loading model and processor without image segmentation...")
@@ -202,7 +202,7 @@ def train(attn_implementation="flash_attention_2"):
     if data_args.data_packing:
         data_module = make_supervised_data_module_packed(tokenizer=tokenizer, data_args=data_args)
     else:
-        data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
+        data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, training_args=training_args)
     trainer = Trainer(
         model=model, processing_class=tokenizer, args=training_args, **data_module
     )

@@ -1,108 +1,58 @@
-# qwen-vl-finetune/qwenvl/utils/image_segmentation_utils.py
+# File: qwenvl/utils/image_segmentation_utils.py
 
-import numpy as np
-import cv2
-from PIL import Image
-import torch
-from ultralytics import YOLO
 import os
-import matplotlib.pyplot as plt
+import torch
 import warnings
+from ultralytics import YOLO
 
 class ImageSegmentationHandler:
+    # 不再需要 _yolo_model_instance 和 _yolo_device 作为类属性
+    # 因为每个实例现在都将持有自己的模型和设备
+
     def __init__(self, yolo_model_path: str):
-        print(f"Loading YOLO model from {yolo_model_path} for image segmentation.")
-        self.yolo_model_instance = YOLO(yolo_model_path).eval().to('cpu')
-        if not self.yolo_model_instance:
-            warnings.warn(f"Failed to load YOLO model from {yolo_model_path}. Segmentation will be skipped.")
-        
-    def generate_segmentation_mask(self, pil_image: Image.Image, show_segment: bool = False) -> Image.Image | None:
+        self.yolo_model_path = yolo_model_path
+        self._model_instance = None  # 实例级别的模型缓存
+        self._device = None          # 实例级别的设备
+
+        # 确保在主进程中实例化时不会立即加载模型
+        # model_path 在这里仅仅被存储起来
+        # print(f"ImageSegmentationHandler instance created for path: {yolo_model_path}. Model loading deferred to first call.")
+
+    # 将 get_yolo_model 变为普通方法，访问 self. 属性
+    def get_yolo_model(self):
         """
-        Generates a combined foreground mask from a PIL Image using YOLO.
-        Returns a PIL Image representing the mask (0 for background, 1 for foreground).
+        这个方法会在每个 DataLoader worker 进程中被调用。
+        它确保每个 worker 只加载一次 YOLO 模型到自己的 GPU。
         """
-        if not self.yolo_model_instance:
-            print("YOLO model not loaded. Skipping segmentation mask generation.")
-            return None
-
-        if not pil_image:
-            print("No PIL image provided for segmentation. Skipping segmentation.")
-            return None
-
-        original_image_np = np.array(pil_image)
-        original_height, original_width, _ = original_image_np.shape
-        combined_mask_np = np.zeros((original_height, original_width), dtype=np.uint8)
-
-        try:
-            # YOLOv8 expects PIL Image or numpy array
-            yolo_results = self.yolo_model_instance(pil_image, verbose=False)
-
-            if yolo_results and yolo_results[0].masks is not None and len(yolo_results[0].masks.data) > 0:
-                masks_tensor = yolo_results[0].masks.data # Tensor of shape (num_objects, H_mask, W_mask)
-                
-                for mask_np in [m.cpu().numpy().astype(np.uint8) for m in masks_tensor]:
-                    # Resize mask back to original image dimensions. INTER_NEAREST is crucial for binary masks.
-                    resized_mask = cv2.resize(mask_np, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
-                    combined_mask_np = np.bitwise_or(combined_mask_np, resized_mask)
-                
-                print(f"Detected {len(masks_tensor)} foreground objects.")
+        if self._model_instance is None: # 检查实例级别的模型是否已加载
+            # 确定当前进程应该使用的 GPU 设备
+            if torch.cuda.is_available():
+                local_rank_str = os.environ.get('LOCAL_RANK')
+                if local_rank_str:
+                    self._device = torch.device(f'cuda:{local_rank_str}')
+                else:
+                    self._device = torch.device('cuda:0')
+                print(f"Worker loading YOLO model on GPU device: {self._device} (physical ID depends on CUDA_VISIBLE_DEVICES)")
             else:
-                print("No foreground objects detected. Generating an all-background mask.")
-        except Exception as e:
-            warnings.warn(f"Error during YOLO segmentation: {e}. Returning an all-background mask.")
-            combined_mask_np = np.zeros((original_height, original_width), dtype=np.uint8)
+                self._device = torch.device('cpu')
+                print(f"Worker loading YOLO model on CPU: {self._device}")
 
-
-        # Convert combined_mask_np to a PIL Image (RGB mode)
-        # We stack it to 3 channels because the image processor usually expects 3 channels.
-        combined_mask_rgb_np = np.stack([combined_mask_np, combined_mask_np, combined_mask_np], axis=-1)
-        combined_mask_pil = Image.fromarray(combined_mask_rgb_np, mode='RGB')
+            # 真正加载模型并移动到设备上
+            if self.yolo_model_path: # 使用实例的 yolo_model_path
+                self._model_instance = YOLO(self.yolo_model_path).eval().to(self._device)
+                if not self._model_instance:
+                    warnings.warn(f"Failed to load YOLO model from {self.yolo_model_path}. Segmentation will be skipped.")
+            else:
+                warnings.warn("YOLO model path not available in handler instance. Skipping YOLO model loading.")
+                self._model_instance = None
         
-        print(f"Final combined foreground mask generated with shape: {combined_mask_np.shape}")
+        return self._model_instance
 
-        if show_segment:
-            plt.figure(figsize=(18, 6))
-
-            plt.subplot(1, 3, 1)
-            plt.imshow(pil_image)
-            plt.title("Original Image")
-            plt.axis('off')
-
-            plt.subplot(1, 3, 2)
-            plt.imshow(combined_mask_np, cmap='gray')
-            plt.title("Generated Foreground Mask")
-            plt.axis('off')
-
-            plt.subplot(1, 3, 3)
-            blacked_out_image = original_image_np.copy()
-            blacked_out_image[combined_mask_np == 1] = [0, 0, 0] # Black out foreground
-            plt.imshow(blacked_out_image)
-            plt.title("Foreground Blacked Out")
-            plt.axis('off')
-            
-            plt.tight_layout()
-            # Save to a unique filename or a temporary one
-            output_filename = "segmentation_vis_train.png" 
-            plt.savefig(output_filename)
-            plt.close()
-            print(f"Segmentation visualization saved to {output_filename}")
-
-        return combined_mask_pil
-
-if __name__ == '__main__':
-    # Example usage for testing
-    # Make sure to provide a valid path to a YOLOv8 segmentation model
-    # And a valid image path for testing
-    yolo_model_path = '/data/zyy/LLaVA/checkpoints/yolov/yolov8l-seg.pt' # Adjust this path
-    test_image_path = 'segmentation_vis.png' # Or any other test image
-    
-    if os.path.exists(yolo_model_path) and os.path.exists(test_image_path):
-        segmentation_handler = ImageSegmentationHandler(yolo_model_path)
-        test_image = Image.open(test_image_path).convert("RGB")
-        mask_image = segmentation_handler.generate_segmentation_mask(test_image, show_segment=True)
-        if mask_image:
-            print(f"Successfully generated mask of size: {mask_image.size}")
+    def __call__(self, image_pil, **kwargs):
+        # 在 __call__ 方法中获取已加载的模型实例
+        yolo_model = self.get_yolo_model() # 调用实例方法
+        if yolo_model:
+            results = yolo_model(image_pil, **kwargs)
+            return results
         else:
-            print("Failed to generate mask.")
-    else:
-        print("Please provide valid paths for YOLO model and a test image to run this example.")
+            return None

@@ -23,7 +23,7 @@ from qwen_vl_utils import process_vision_info
 def run_inference(args):
     """Run inference on the MMMU dataset."""
     # Load dataset
-    data = load_dataset(args.dataset, local_file_path="/data/zyy/Qwen2.5-VL/MMMU_DEV_VAL.tsv")
+    data = load_dataset(args.dataset, local_file_path="/home/zyy/Qwen2.5-VL/MMMU_DEV_VAL.tsv")
     
     # Set up image root directory
     img_root = os.path.join(os.environ['LMUData'], 'images', 'MMMU')

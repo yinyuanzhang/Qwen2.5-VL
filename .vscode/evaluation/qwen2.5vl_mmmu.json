@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Debug run_mmmu.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/evaluation/mmmu/run_mmmu.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/evaluation/mmmu/", // 设置工作目录到脚本所在目录
+            "args": [
+                "infer",
+                "--model-path", "Qwen/Qwen2.5-VL-3B-Instruct",
+                "--data-dir", "/home/zyy/mmmu",
+                "--dataset", "MMMU_DEV_VAL",
+                "--output-file", "results/mmmu_dev_val_predictions.jsonl",
+                "--use-image-segmentation"
+            ],
+            // 如果你的Conda环境不在默认路径，或有其他特殊设置，可能需要指定Python解释器路径
+            "pythonPath": "/data/yinyuan/conda_env/qwen2/bin/python", // 确保这是你的 qwen2 环境的python路径
+            "justMyCode": false,
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "3" // <--- 指定使用 CUDA 设备 0
+            }
+        }
+    ]
+}

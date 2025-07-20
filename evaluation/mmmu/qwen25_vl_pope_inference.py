@@ -23,6 +23,10 @@ except ImportError as e:
     print("Please ensure 'qwen2_vl.model', 'qwen_vl_utils', and 'dataset_utils' are correctly configured in your PYTHONPATH or located in the same directory.")
     sys.exit(1)
 
+import os
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
+
 def run_qwen_pope_inference(args):
     """
     Run inference on the POPE dataset using Qwen2.5-VL,
@@ -73,8 +77,6 @@ def run_qwen_pope_inference(args):
     model = Qwen2VLChat(
         model_path=args.model_path,
         temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
         use_custom_prompt=True,
         min_pixels=1280*28*28,
         max_pixels=5120*28*28,
@@ -90,6 +92,10 @@ def run_qwen_pope_inference(args):
     ans_file = open(args.answers_file, "w")
     for i, q_line in tqdm(enumerate(questions), total=len(questions), desc="Running inference"):
         try:
+
+            if q_line.get('category') != 'random': # 使用 .get() 避免 KeyError，如果 'category' 不存在，则默认为 None
+                continue # 跳过当前循环的其余部分，处理下一条数据
+
             image_filename = q_line["image"]
             question_text = q_line["text"]
             question_id = q_line["question_id"]
@@ -142,7 +148,7 @@ if __name__ == "__main__":
     parser.add_argument("--question-file", type=str, required=True, help="Path to the POPE question JSONL file.")
     parser.add_argument("--answers-file", type=str, default="qwen25_vl_pope_answers.jsonl", help="Output file path for generated answers.")
 
-    parser.add_argument("--temperature", type=float, default=0.01)
+    parser.add_argument("--temperature", type=float, default=0)
     parser.add_argument("--top-p", type=float, default=0.001)
     parser.add_argument("--top-k", type=int, default=1)
     parser.add_argument("--max-new-tokens", type=int, default=128)
@@ -151,7 +157,7 @@ if __name__ == "__main__":
     parser.add_argument("--cot-prompt", type=str, default="")
 
     parser.add_argument("--use-image-segmentation", action="store_true", default=False)
-    parser.add_argument("--yolo-model_path", type=str, default="./checkpoints/yolov/yolov8l-seg.pt")
+    parser.add_argument("--yolo-model-path", type=str, default="./checkpoints/yolov/yolov8l-seg.pt")
 
     parser.add_argument("--num-chunks", type=int, default=1)
     parser.add_argument("--chunk-idx", type=int, default=0)

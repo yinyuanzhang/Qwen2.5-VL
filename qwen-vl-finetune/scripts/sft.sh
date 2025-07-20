@@ -10,9 +10,12 @@ export CUDA_VISIBLE_DEVICES="4,5,6,7"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export LD_LIBRARY_PATH=/data/zyy/cuda-11.8/libcurand/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}
 
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
+
 
 # locate libmpi_cxx
-
+export NCCL_DEBUG=INFO
+export TORCH_NCCL_TRACE_BUFFER_SIZE=1048576
 
 # DeepSpeed configuration
 deepspeed=./scripts/zero3.json
@@ -33,11 +36,11 @@ datasets=llava
 
 # Output configuration
 run_name="qwen2vl-baseline"
-output_dir=./output
+output_dir=/data/yinyuan/output_finetune
 
 # Image segmentation configuration (new parameters)
 USE_IMAGE_SEGMENTATION=True # Set to True to enable image segmentation
-YOLO_MODEL_PATH=/data/zyy/LLaVA/checkpoints/yolov/yolov8l-seg.pt # Path to your YOLOv8 segmentation model
+YOLO_MODEL_PATH=/home/zyy/LLaVA/checkpoints/yolov/yolov8n-seg.pt # Path to your YOLOv8 segmentation model
 
 # Training arguments
 args="
@@ -58,7 +61,7 @@ args="
     --min_pixels 784 \
     --eval_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 1000 \
+    --save_steps 100000 \
     --save_total_limit 1 \
     --learning_rate ${lr} \
     --weight_decay 0 \

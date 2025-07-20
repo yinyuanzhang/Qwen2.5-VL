@@ -8,7 +8,7 @@
             "name": "Python: Qwen2.5-VL POPE Inference",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/qwen25_vl_model_vqa_loader.py",
+            "program": "${workspaceFolder}/evaluation/mmmu/qwen25_vl_pope_inference.py",
             "cwd": "${workspaceFolder}", // 确保工作目录是项目根目录
             "console": "integratedTerminal",
             "justMyCode": true,
@@ -18,15 +18,13 @@
                 "--question-file", "${env:HOME}/autodl-tmp/playground/data/eval/pope/llava_pope_test.jsonl",
                 "--answers-file", "${env:HOME}/autodl-tmp/playground/data/eval/pope/answers/qwen25-vl-3b-pope.jsonl",
                 "--temperature", "0",
-                "--num-beams", "1",
                 "--max-new-tokens", "128",
-                "--num-workers", "4",
                 "--use-image-segmentation", // 如果不需要分割，可以移除此行
                 "--yolo-model-path", "/data/zyy/LLaVA/checkpoints/yolov/yolov8l-seg.pt" // 确保路径正确
             ],
+            "pythonPath": "/data/yinyuan/conda_env/qwen2/bin/python", // 确保这是你的 qwen2 环境的python路径
             "env": {
-                // 如果你的项目依赖特定的环境变量，可以在这里设置
-                // "LMUData": "${env:HOME}/autodl-tmp/playground/data/" // 示例，如果你的Python脚本需要此变量
+                "CUDA_VISIBLE_DEVICES": "3" // <--- 指定使用 CUDA 设备 0
             }
         },
         {

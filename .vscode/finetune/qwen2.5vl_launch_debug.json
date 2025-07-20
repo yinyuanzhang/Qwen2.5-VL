@@ -1,0 +1,83 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Distributed Training (Master Process Debug)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/qwen-vl-finetune/qwenvl/train/train_qwen.py", // 你的 entry_file
+            "cwd": "${workspaceFolder}/qwen-vl-finetune", // 确保工作目录是项目根目录
+            "console": "integratedTerminal", // 或 "internalConsole"，建议使用 integratedTerminal 方便查看多进程输出
+            "justMyCode": false, // 允许调试第三方库代码，对于深度学习通常很有用
+            "env": {
+                // 分布式训练配置 (模拟 torchrun 环境变量)
+                "MASTER_ADDR": "127.0.0.1",
+                "MASTER_PORT": "20002", // 调试时固定端口，便于追踪
+                "NNODES": "1", // 假设单节点调试
+                "NPROC_PER_NODE": "1", // 模拟有4个GPU，但实际只启动一个进程进行调试
+
+                // 显式指定 PyTorch 分布式后端为 NCCL
+                // 这能有效阻止 DeepSpeed 尝试 MPI 初始化
+                "TORCH_DISTRIBUTED_BACKEND": "nccl",
+                // 强制 DeepSpeed 跳过 MPI 环境检测
+                "DS_SKIP_MPI_INITIALIZATION": "1",
+
+                // 模拟 torchrun 设置的一些分布式环境变量，帮助 DeepSpeed 内部逻辑判断环境
+                "RANK": "0", // 调试时为主进程，其 rank 总是 0
+                "WORLD_SIZE": "1", // 调试时通常只启动一个进程
+                "LOCAL_RANK": "0", // 调试时本地 rank 也是 0
+
+                // CUDA/PyTorch 特定环境变量
+                "CUDA_VISIBLE_DEVICES": "7", // 调试时使用的 GPU，如果可用且指定
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+
+                // LD_LIBRARY_PATH 设置：确保系统级的 Open MPI 库路径在最前面，然后是 CUDA 库路径。
+                // "${env:LD_LIBRARY_PATH}" 会保留你终端中已有的 LD_LIBRARY_PATH，这是很重要的。
+                "LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu/:/data/zyy/cuda-11.8/libcurand/targets/x86_64-linux/lib:/data/zyy/cuda-11.8/lib64:${env:LD_LIBRARY_PATH}",
+
+                // DeepSpeed 相关环境变量
+                "DS_BUILD_OPS": "1" // 通常 DeepSpeed 需要这个来编译自定义操作
+            },
+            "args": [
+                "--deepspeed", "./scripts/zero3.json",
+                "--model_name_or_path", "Qwen/Qwen2.5-VL-3B-Instruct",
+                "--dataset_use", "llava",
+                "--data_flatten", "True",
+                "--tune_mm_vision", "False",
+                "--tune_mm_mlp", "True",
+                "--tune_mm_llm", "True",
+                "--bf16",
+                "--output_dir", "./output",
+                "--num_train_epochs", "0.5",
+                "--per_device_train_batch_size", "1",
+                "--per_device_eval_batch_size", "8", // 4*2
+                "--gradient_accumulation_steps", "4",
+                "--max_pixels", "50176",
+                "--min_pixels", "784",
+                "--eval_strategy", "no",
+                "--save_strategy", "steps",
+                "--save_steps", "1000",
+                "--save_total_limit", "1",
+                "--learning_rate", "2e-7",
+                "--weight_decay", "0",
+                "--warmup_ratio", "0.03",
+                "--max_grad_norm", "1",
+                "--lr_scheduler_type", "cosine",
+                "--logging_steps", "1",
+                "--model_max_length", "8192",
+                "--gradient_checkpointing", "True",
+                "--dataloader_num_workers", "4",
+                "--run_name", "qwen2vl-baseline",
+                "--report_to", "wandb",
+                "--use_image_segmentation", "True", // 布尔值作为字符串 "True" 或 "False" 传递
+                "--yolo_model_path", "/home/zyy/LLaVA/checkpoints/yolov/yolov8l-seg.pt"
+            ],
+            // 指定用于调试的 Python 解释器
+            // 确保这个路径指向你的 'qwen2' conda 环境的 python 可执行文件
+            "python": "/data/yinyuan/conda_env/qwen2/bin/python"
+        }
+    ]
+}

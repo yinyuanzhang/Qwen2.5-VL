@@ -28,8 +28,8 @@ VIDEOCHATGPT = {
 
 # 这是你的自定义数据集配置
 LLAVA_MIX665K_DATASET = {
-    "annotation_path": "/data/zyy/autodl-tmp/playground/data/llava_v1_5_mix665k.json",
-    "data_path": "/data/zyy/autodl-tmp/playground/data", # 确保这是图像文件的根目录
+    "annotation_path": "/home/zyy/autodl-tmp/playground/data/llava_v1_5_mix665k.json",
+    "data_path": "/home/zyy/autodl-tmp/playground/data", # 确保这是图像文件的根目录
 }
 
 data_dict = {

@@ -41,7 +41,7 @@ class Qwen2VLPromptMixin:
         # return False
 
     def build_prompt(self, line, dataset: str) -> list[dict[str, str]]:
-        return self._build_mmmu_prompt(line, dataset)
+        return self._build_llava_prompt(line, dataset)
 
     def split_MMMU(self, msgs):
         text, images = None, []
@@ -173,4 +173,20 @@ class Qwen2VLPromptMixin:
         msgs.append(dict(type='text', value=question))
         assert msgs[-1]['type'] == 'text'
         msgs[-1]['value'] += VQA_PROMPT
+        return msgs
+
+    def _build_llava_prompt(self, line, dataset: str) -> list[dict[str, str]]:
+        """change the prompt for VQA dataset:"""
+        VQA_PROMPT = '\nPlease try to answer the question with short words or phrases if possible.'
+
+        tgt_path = self.dump_image(line, dataset)
+        question = line['question']
+        msgs = []
+        if isinstance(tgt_path, list):
+            msgs.extend([dict(type='image', value=p) for p in tgt_path])
+        else:
+            msgs = [dict(type='image', value=tgt_path)]
+        msgs.append(dict(type='text', value=question))
+        assert msgs[-1]['type'] == 'text'
+        # msgs[-1]['value'] += VQA_PROMPT
         return msgs
